@@ -1,0 +1,3 @@
+[submodule "HUwpBaseLib"]
+	path = HUwpBaseLib
+	url = git@github.com:HyundongHwang/HUwpBaseLib.git
