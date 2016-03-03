@@ -1,4 +1,6 @@
-﻿using System;
+﻿using HUwpBaseLib.Logs;
+using HUwpBaseLib.Utils;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -39,6 +41,21 @@ namespace HImgDownloader
         /// <param name="e">시작 요청 및 프로세스에 대한 정보입니다.</param>
         protected override void OnLaunched(LaunchActivatedEventArgs e)
         {
+            var result = HublUtils.GetComputerInfo();
+
+            Log.Init(new List<LogOutputDirections>
+            {
+                LogOutputDirections.VsConsole,
+                LogOutputDirections.LocalFile,
+                LogOutputDirections.LocalSqliteDb,
+            });
+
+
+
+
+
+
+
 
 #if DEBUG
             if (System.Diagnostics.Debugger.IsAttached)

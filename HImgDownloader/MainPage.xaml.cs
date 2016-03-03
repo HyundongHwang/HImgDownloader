@@ -31,43 +31,55 @@ using Newtonsoft.Json;
 using Windows.UI.Popups;
 using Windows.UI.Xaml.Media.Imaging;
 using Windows.System.Threading;
+using HImgDownloader.Models;
+using HUwpBaseLib.Logs;
+using Windows.System.Profile;
+using Windows.Security.ExchangeActiveSyncProvisioning;
+using SQLite.Net;
+using SQLite.Net.Platform.WinRT;
+using Windows.UI.ViewManagement;
 
 // 빈 페이지 항목 템플릿은 http://go.microsoft.com/fwlink/?LinkId=402352&clcid=0x409 에 문서화되어 있습니다.
 
 namespace HImgDownloader
 {
+    public class Contact
+    {
+        public int Id { get; set; }
+        public string Name { get; set; }
+        public string Address { get; set; }
+        public string Mobile { get; set; }
+    }
+
+
+
+
     /// <summary>
     /// 자체에서 사용하거나 프레임 내에서 탐색할 수 있는 빈 페이지입니다.
     /// </summary>
     public sealed partial class MainPage : Page
     {
-        private ObservableCollection<MainPageItem> _items = new ObservableCollection<MainPageItem>();
+        private ObservableCollection<ImgItem> _items = new ObservableCollection<ImgItem>();
         private string _oldText;
         private List<Task> _tasks = new List<Task>();
 
         public MainPage()
         {
+            var path = ApplicationData.Current.LocalFolder.Path;
             this.InitializeComponent();
             this.LbObj.ItemsSource = _items;
             this.BtnClearAll.Click += BtnClearAll_Click;
             this.BtnRemoveDownloaded.Click += BtnRemoveDownloaded_Click;
         }
 
-        private void BtnRemoveDownloaded_Click(object sender, RoutedEventArgs e)
+        private async void BtnRemoveDownloaded_Click(object sender, RoutedEventArgs e)
         {
-            for (int i = _items.Count - 1; i >= 0; i--)
-            {
-                var item = _items[i];
-
-                if (item.Progress == item.FileSize)
-                {
-                    _items.RemoveAt(i);
-                }
-            }
+            Log.d("BtnRemoveDownloaded_Click");
         }
 
         private void BtnClearAll_Click(object sender, RoutedEventArgs e)
         {
+            Log.d("BtnClearAll_Click");
             _items.Clear();
         }
 
@@ -83,59 +95,69 @@ namespace HImgDownloader
             Clipboard.ContentChanged -= _Clipboard_ContentChanged;
         }
 
-        private async Task _ProcessPageAsync(string url)
+        private void _ScrapImgUrls(string htmlStr, string tagName, string propName, ref List<string> imgUrlList)
         {
-            Debug.WriteLine($"_ProcessPageAsync url : {url}");
-            var resStr = "";
-
-            try
-            {
-                resStr = await HublUtils.HttpGetStringAsync(url);
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine(ex);
-            }
-
-            if (string.IsNullOrWhiteSpace(resStr))
-                return;
-
-
-
             var doc = new HtmlAgilityPack.HtmlDocument();
-            doc.LoadHtml(resStr);
+            doc.LoadHtml(htmlStr);
+
+
+
             var imgNodes = new List<HtmlNode>();
-            doc.DocumentNode.HUBL_SelectNodes("img", ref imgNodes);
-            doc.DocumentNode.HUBL_SelectNodes("a", ref imgNodes);
-
-            if (imgNodes == null)
-                return;
-
-
+            doc.DocumentNode.HUBL_SelectNodes(tagName, ref imgNodes);
 
             foreach (var imgNode in imgNodes)
             {
-                var srcStr = imgNode.GetAttributeValue("src", null);
-                var srcUrl = "";
+                var srcValue = imgNode.GetAttributeValue(propName, null);
 
-                if (string.IsNullOrEmpty(srcStr))
+                if (string.IsNullOrEmpty(srcValue))
                     continue;
 
 
 
-                if (srcStr.StartsWith("http"))
+                var imgUrl = "";
+
+                if (srcValue.StartsWith("http"))
                 {
-                    srcUrl = srcStr;
+                    imgUrl = srcValue;
                 }
                 else
                 {
-                    srcUrl = HublUtils.CombineUrl(url, srcStr);
+                    imgUrl = HublUtils.CombineUrl(imgUrl, srcValue);
                 }
 
-                if (string.IsNullOrEmpty(srcUrl))
+                if (string.IsNullOrEmpty(imgUrl))
                     continue;
 
-                var ext = HublUtils.GetExt(srcUrl);
+
+
+                imgUrlList.Add(imgUrl);
+            }
+        }
+
+        private async Task _ProcessPageAsync(string url)
+        {
+            Log.d($"_ProcessPageAsync url : {url}");
+            var htmlStr = "";
+
+            try
+            {
+                htmlStr = await HublUtils.HttpGetStringAsync(url);
+            }
+            catch (Exception ex)
+            {
+                Log.exception(ex);
+            }
+
+            if (string.IsNullOrWhiteSpace(htmlStr))
+                return;
+
+            var imgUrlList = new List<string>();
+            _ScrapImgUrls(htmlStr, "img", "src", ref imgUrlList);
+            _ScrapImgUrls(htmlStr, "a", "href", ref imgUrlList);
+
+            foreach (var imgUrl in imgUrlList)
+            {
+                var ext = HublUtils.GetExt(imgUrl);
 
                 if (ext != ".png" &&
                     ext != ".jpg" &&
@@ -144,8 +166,8 @@ namespace HImgDownloader
 
 
 
-                Debug.WriteLine("srcUrl :" + srcUrl);
-                var task = _DownloadImgAsync(srcUrl);
+                Log.d("srcUrl :" + imgUrl);
+                var task = _DownloadImgAsync(imgUrl);
                 _tasks.Add(task);
 
                 while (_tasks.Count > 10)
@@ -173,7 +195,7 @@ namespace HImgDownloader
 
 
                 var newFile = await newFolder.CreateFileAsync(newFileName, CreationCollisionOption.ReplaceExisting);
-                var item = new MainPageItem();
+                var item = new ImgItem();
                 item.Url = srcUrl;
                 item.Progress = 0;
                 item.FileSize = 100;
@@ -192,7 +214,7 @@ namespace HImgDownloader
             }
             catch (Exception ex)
             {
-                Debug.WriteLine(ex);
+                Log.exception(ex);
             }
         }
 
@@ -218,7 +240,7 @@ namespace HImgDownloader
             if (dataPackageView.Contains(StandardDataFormats.Text))
             {
                 string text = await dataPackageView.GetTextAsync();
-                Debug.WriteLine($"text : {text}");
+                Log.d($"text : {text}");
 
                 if (_oldText == text)
                     return;
@@ -262,85 +284,10 @@ namespace HImgDownloader
 
         private async void _Item_Tapped(object sender, TappedRoutedEventArgs e)
         {
-            var item = (sender as FrameworkElement).DataContext as MainPageItem;
+            var item = (sender as FrameworkElement).DataContext as ImgItem;
             var json = JsonConvert.SerializeObject(item);
             var dlg = new MessageDialog(json);
             await dlg.ShowAsync();
-        }
-    }
-
-    public class MainPageItem : INotifyPropertyChanged
-    {
-        public string Url { get; set; }
-
-        #region BitmapImage FileBmSource PropertyChanged
-        BitmapImage _FileBmSource;
-        public BitmapImage FileBmSource
-        {
-            get
-            {
-                return _FileBmSource;
-            }
-            set
-            {
-                if (_FileBmSource != value)
-                {
-                    _FileBmSource = value;
-                    if (this.PropertyChanged != null)
-                    {
-                        this.PropertyChanged.Invoke(this, new PropertyChangedEventArgs(STR_FileBmSource));
-                    }
-                }
-            }
-        }
-        public const string STR_FileBmSource = "FileBmSource";
-        #endregion
-
-        public int FileSize { get; set; }
-
-        #region int Progress PropertyChanged
-        int _Progress;
-        public int Progress
-        {
-            get
-            {
-                return _Progress;
-            }
-            set
-            {
-                if (_Progress != value)
-                {
-                    _Progress = value;
-                    if (this.PropertyChanged != null)
-                    {
-                        this.PropertyChanged.Invoke(this, new PropertyChangedEventArgs("Progress"));
-                    }
-                }
-            }
-        }
-        #endregion
-
-        public event PropertyChangedEventHandler PropertyChanged;
-    }
-
-    public class MockMainPageItems : List<MainPageItem>
-    {
-        public MockMainPageItems()
-        {
-            if (!DesignMode.DesignModeEnabled)
-                return;
-
-            var rand = new Random(new object().GetHashCode());
-
-            for (int i = 0; i < 100; i++)
-            {
-                this.Add(new MainPageItem()
-                {
-                    Url = Guid.NewGuid().ToString() + Guid.NewGuid().ToString() + Guid.NewGuid().ToString(),
-                    Progress = rand.Next(0, 100),
-                    FileSize = 100,
-                });
-            }
         }
     }
 }
